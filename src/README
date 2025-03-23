@@ -1,0 +1,130 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+// สร้างอ็อบเจ็กต์สำหรับการเชื่อมต่อ WiFi และ MQTT
+WiFiClient client;
+PubSubClient mqtt(client);
+
+// กำหนดขา GPIO ที่ใช้ควบคุม LED
+#define LED_PIN 25
+
+// กำหนดค่าชื่อ WiFi และรหัสผ่าน
+#define WIFI_NAME "Wokwi-GUEST"
+#define WIFI_PASS ""
+
+// กำหนดค่าของ MQTT Broker ที่จะเชื่อมต่อ
+#define MQTT_SERVER "broker.hivemq.com"
+#define MQTT_PORT 1883
+#define MQTT_CLIENT_ID "ESP32_67098633"  // กำหนดชื่อ Client ID สำหรับ MQTT
+#define MQTT_TOPIC "spu/cpe"  // Topic ที่ใช้สำหรับส่งข้อมูลไปยัง MQTT Broker
+
+// ตัวแปรสำหรับควบคุมสถานะของ LED
+bool ledState = LOW;
+unsigned long lastToggleTime = 0;
+const unsigned long ledInterval = 1000; // กำหนดให้ LED กระพริบทุก 1 วินาที
+
+/**
+ * ฟังก์ชันเชื่อมต่อ WiFi
+ */
+void connectWiFi() {
+    Serial.print("Connecting to WiFi: ");
+    Serial.println(WIFI_NAME);
+
+    // ตั้งค่าให้ใช้ Google DNS (8.8.8.8) แทนค่าเริ่มต้น
+    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, IPAddress(8,8,8,8));
+    WiFi.begin(WIFI_NAME, WIFI_PASS);
+
+    int attempt = 0;
+    // ตรวจสอบว่าเชื่อมต่อสำเร็จหรือไม่
+    while (WiFi.status() != WL_CONNECTED) {
+        Serial.print(".");
+        delay(500);
+        attempt++;
+        // ถ้าเชื่อมต่อ WiFi ไม่สำเร็จภายใน 10 วินาที ให้รีสตาร์ท ESP32
+        if (attempt > 20) {
+            Serial.println("\nFailed to connect to WiFi. Restarting...");
+            ESP.restart();
+        }
+    }
+    Serial.println("\nWiFi Connected!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP()); // แสดง IP Address ที่ได้รับ
+}
+
+/**
+ * ฟังก์ชันเชื่อมต่อกับ MQTT Broker
+ */
+void connectMQTT() {
+    int attempt = 0;
+    // ตรวจสอบว่าเชื่อมต่อกับ MQTT Broker แล้วหรือยัง
+    while (!mqtt.connected()) {
+        Serial.println("Connecting to MQTT...");
+        if (mqtt.connect(MQTT_CLIENT_ID)) {  // ถ้าเชื่อมต่อสำเร็จ
+            Serial.println("MQTT Connected");
+            mqtt.subscribe(MQTT_TOPIC);  // Subscribe ไปยัง MQTT Topic ที่กำหนด
+        } else {  // ถ้าเชื่อมต่อไม่สำเร็จ
+            Serial.print("MQTT Connection failed, rc=");
+            Serial.println(mqtt.state());
+            delay(5000); // รอ 5 วินาทีแล้วลองใหม่
+            attempt++;
+            if (attempt > 5) {  // ถ้าเชื่อมต่อไม่สำเร็จภายใน 5 ครั้ง ให้รีสตาร์ท ESP32
+                Serial.println("Restarting ESP32...");
+                ESP.restart();
+            }
+        }
+    }
+}
+
+/**
+ * ฟังก์ชันสำหรับทำให้ LED กระพริบทุก 1 วินาที
+ */
+void toggleLED() {
+    if (millis() - lastToggleTime >= ledInterval) {  // เช็คว่าผ่านไป 1 วินาทีหรือยัง
+        lastToggleTime = millis();  // อัปเดตเวลาล่าสุด
+        ledState = !ledState;  // สลับสถานะของ LED
+        digitalWrite(LED_PIN, ledState);  // เปลี่ยนสถานะของ LED
+        Serial.print("LED State: ");
+        Serial.println(ledState ? "ON" : "OFF");  // แสดงสถานะของ LED ทาง Serial Monitor
+    }
+}
+
+/**
+ * ฟังก์ชัน setup() → ทำงานครั้งเดียวเมื่อ ESP32 เริ่มต้นทำงาน
+ */
+void setup() {
+    Serial.begin(115200);  // เปิด Serial Monitor ที่ความเร็ว 115200 baud
+    pinMode(LED_PIN, OUTPUT);  // กำหนดให้ขา LED เป็น OUTPUT
+    digitalWrite(LED_PIN, LOW);  // เริ่มต้นให้ LED ปิดก่อน
+
+    connectWiFi();  // เชื่อมต่อ WiFi
+    mqtt.setServer(MQTT_SERVER, MQTT_PORT);  // กำหนดค่าของ MQTT Server
+    connectMQTT();  // เชื่อมต่อ MQTT
+}
+
+/**
+ * ฟังก์ชัน loop() → ทำงานวนซ้ำตลอดเวลา
+ */
+void loop() {
+    // เช็คว่า WiFi ยังเชื่อมต่ออยู่หรือไม่
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi disconnected. Reconnecting...");
+        connectWiFi();
+    }
+
+    // เช็คว่า MQTT ยังเชื่อมต่ออยู่หรือไม่
+    if (!mqtt.connected()) {
+        Serial.println("MQTT disconnected. Reconnecting...");
+        connectMQTT();
+    }
+
+    mqtt.loop();  // ให้ MQTT Client ทำงาน
+    toggleLED();  // ทำให้ LED กระพริบ
+
+    // ส่งข้อความผ่าน MQTT ไปที่ Topic ที่กำหนด
+    if (mqtt.publish(MQTT_TOPIC, "Hello DD")) {
+        Serial.println("Published: Hello DD");
+    } else {
+        Serial.println("Publish failed");
+    }
+}
