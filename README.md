@@ -23,9 +23,3 @@
 1. เปิดเว็บ [wokwi.com](https://wokwi.com/)
 2. โหลดไฟล์ `diagram.json` และ `wokwi.toml` เข้าไป
 3. ทดสอบวงจรและโค้ดในหน้า Simulation
-
----
-
-## 📜 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
